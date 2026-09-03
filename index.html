@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>数桥</title>
+  <style>
+    body { margin: 0; display: grid; min-height: 100vh; place-items: center; background: #f5f5f5; font-family: Arial, sans-serif; }
+    #game { width: min(90vmin, 640px); aspect-ratio: 1; border: 1px solid #999; background: #fff; }
+    svg { display: block; width: 100%; height: 100%; }
+    line { stroke: #222; stroke-width: 1.4; }
+    line.invalid { stroke: #d33; }
+    circle { fill: #fff; stroke: #222; stroke-width: 1.2; cursor: pointer; }
+    circle.selected { stroke: #c90; stroke-width: 2.2; }
+    circle.complete { fill: #b9e4c5; stroke: #287a3d; }
+    circle.over { fill: #f5c4c0; stroke: #c33; }
+    text { fill: #222; font: bold 5px Arial, sans-serif; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+    #message { margin: 10px 0 0; color: #555; text-align: center; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div>
+    <div id="game"><svg id="board" viewBox="0 0 100 100" aria-label="数桥关卡"></svg></div>
+    <p id="message">正在读取关卡...</p>
+  </div>
+  <script>
+    const board = document.querySelector('#board');
+    const message = document.querySelector('#message');
+    const state = { columns: 1, rows: 1, nodes: [], bridges: [], selected: null };
+
+    const position = node => ({
+      x: 5 + node.column * 90 / (state.columns - 1),
+      y: 5 + node.row * 90 / (state.rows - 1)
+    });
+    const nodeById = id => state.nodes.find(node => node.id === id);
+    const pairKey = (first, second) => [first, second].sort().join(':');
+    const pairCount = (first, second) => state.bridges.filter(bridge => pairKey(bridge.first, bridge.second) === pairKey(first, second)).length;
+    const degree = id => state.bridges.reduce((total, bridge) => total + (bridge.first === id || bridge.second === id ? 1 : 0), 0);
+    const between = (value, start, end) => value > Math.min(start, end) && value < Math.max(start, end);
+
+    function bridgePoints(bridge, offset) {
+      const first = position(nodeById(bridge.first));
+      const second = position(nodeById(bridge.second));
+      if (first.y === second.y) return { x1: first.x, y1: first.y + offset, x2: second.x, y2: second.y + offset };
+      return { x1: first.x + offset, y1: first.y, x2: second.x + offset, y2: second.y };
+    }
+
+    function crosses(first, second) {
+      const firstStart = position(nodeById(first.first));
+      const firstEnd = position(nodeById(first.second));
+      const secondStart = position(nodeById(second.first));
+      const secondEnd = position(nodeById(second.second));
+      const firstHorizontal = firstStart.y === firstEnd.y;
+      const secondHorizontal = secondStart.y === secondEnd.y;
+      if (firstHorizontal === secondHorizontal) return false;
+      const horizontal = firstHorizontal ? [firstStart, firstEnd] : [secondStart, secondEnd];
+      const vertical = firstHorizontal ? [secondStart, secondEnd] : [firstStart, firstEnd];
+      return between(vertical[0].x, horizontal[0].x, horizontal[1].x) && between(horizontal[0].y, vertical[0].y, vertical[1].y);
+    }
+
+    function invalid(bridge) {
+      return state.bridges.some(other => other !== bridge && crosses(bridge, other));
+    }
+
+    function connected() {
+      if (!state.nodes.length) return false;
+      const reached = new Set([state.nodes[0].id]);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        state.bridges.forEach(bridge => {
+          if (!reached.has(bridge.first) && !reached.has(bridge.second)) return;
+          const size = reached.size;
+          reached.add(bridge.first);
+          reached.add(bridge.second);
+          changed = changed || reached.size !== size;
+        });
+      }
+      return reached.size === state.nodes.length;
+    }
+
+    function complete() {
+      return state.nodes.length > 0 && state.nodes.every(node => degree(node.id) === node.value) && state.bridges.every(bridge => !invalid(bridge)) && connected();
+    }
+
+    function render() {
+      board.replaceChildren();
+      const edges = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      state.bridges.forEach((bridge, index) => {
+        const previous = state.bridges.slice(0, index).filter(item => pairKey(item.first, item.second) === pairKey(bridge.first, bridge.second)).length;
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        const points = bridgePoints(bridge, previous ? 1.2 : -1.2);
+        line.setAttribute('x1', points.x1); line.setAttribute('y1', points.y1); line.setAttribute('x2', points.x2); line.setAttribute('y2', points.y2);
+        line.classList.toggle('invalid', invalid(bridge));
+        edges.append(line);
+      });
+      board.append(edges);
+      const nodes = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      state.nodes.forEach(node => {
+        const point = position(node);
+        const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        circle.setAttribute('cx', point.x); circle.setAttribute('cy', point.y); circle.setAttribute('r', 4.8);
+        label.setAttribute('x', point.x); label.setAttribute('y', point.y); label.textContent = node.value;
+        circle.classList.toggle('selected', state.selected === node.id);
+        circle.classList.toggle('complete', degree(node.id) === node.value);
+        circle.classList.toggle('over', degree(node.id) > node.value);
+        group.append(circle, label);
+        group.addEventListener('click', () => selectNode(node.id));
+        nodes.append(group);
+      });
+      board.append(nodes);
+      message.textContent = complete() ? '恭喜，游戏通关！' : '连续点击两个节点建立连线';
+    }
+
+    function selectNode(id) {
+      if (state.selected === null) {
+        state.selected = id;
+      } else if (state.selected === id) {
+        state.selected = null;
+      } else {
+        const first = nodeById(state.selected);
+        const second = nodeById(id);
+        if (first.column !== second.column && first.row !== second.row) {
+          message.textContent = '只能连接同一行或同一列的节点';
+          state.selected = null;
+        } else if (pairCount(first.id, second.id) >= 2) {
+          message.textContent = '两个节点之间最多两条连线';
+          state.selected = null;
+        } else {
+          state.bridges.push({ first: first.id, second: second.id });
+          state.selected = null;
+        }
+      }
+      render();
+    }
+
+    fetch('shuqiao-level.json')
+      .then(response => {
+        if (!response.ok) throw new Error('load failed');
+        return response.json();
+      })
+      .then(level => {
+        state.columns = Number(level.columns) || 1;
+        state.rows = Number(level.rows) || 1;
+        state.nodes = (level.nodes || []).map((node, index) => ({ id: index, column: Number(node.column), row: Number(node.row), value: Number(node.value) }));
+        render();
+      })
+      .catch(() => { message.textContent = '无法读取 shuqiao-level.json'; });
+  </script>
+</body>
+</html>
